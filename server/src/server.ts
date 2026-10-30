@@ -4,7 +4,6 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import {
   CLOSE_CODES,
   CONNECTION_IS_DEAD_AFTER_MS,
-  DEDUPE_IDS_KEPT_PER_ROOM,
   ERROR_TEXTS,
   HEARTBEAT_INTERVAL_MS,
   HISTORY_LIMIT_DEFAULT,
@@ -19,24 +18,24 @@ import type {
   ServerPayload
 } from './protocol'
 import { MemoryStorage, type StorageInterface } from './storage'
+import { MongoStorage } from './mongo-storage'
 import { RoomRegistry } from './rooms'
+import { RecentIdsKeeper } from './dedupe'
 
-const storage: StorageInterface = new MemoryStorage()
-const registry = new RoomRegistry()
-const recentIdsByRoom = new Map<string, string[]>()
+const MONGO_URI = process.env.MONGO_URI ?? ''
 
-const isDuplicate = (room: string, id: string): boolean => {
-  const recent = recentIdsByRoom.get(room) ?? []
-  if (recent.includes(id)) {
-    return true
+const makeStorage = (): StorageInterface => {
+  if (MONGO_URI) {
+    console.log('using mongodb storage')
+    return new MongoStorage(MONGO_URI)
   }
-  recent.push(id)
-  if (recent.length > DEDUPE_IDS_KEPT_PER_ROOM) {
-    recent.splice(0, recent.length - DEDUPE_IDS_KEPT_PER_ROOM)
-  }
-  recentIdsByRoom.set(room, recent)
-  return false
+  console.log('using in-memory storage')
+  return new MemoryStorage()
 }
+
+const storage: StorageInterface = makeStorage()
+const registry = new RoomRegistry()
+const recentIds = new RecentIdsKeeper()
 
 const app = express()
 app.get('/health', (_request, response) => {
@@ -122,7 +121,7 @@ wss.on('connection', (rawSocket: WebSocket) => {
         return
       }
       const id = payload.id || messageId()
-      if (isDuplicate(session.room, id)) {
+      if (recentIds.seen(session.room, id)) {
         return
       }
       const message: ChatMessage = {
@@ -154,7 +153,10 @@ const shutdown = (): void => {
   clearInterval(heartbeat)
   registry.closeAll('Server shutting down')
   wss.close()
-  server.close(() => {
+  server.close(async () => {
+    if (storage instanceof MongoStorage) {
+      await storage.stop()
+    }
     process.exit(0)
   })
 }
@@ -162,6 +164,13 @@ const shutdown = (): void => {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-server.listen(HTTP_PORT, () => {
-  console.log(`chat server listening on http://localhost:${HTTP_PORT}`)
-})
+const start = async (): Promise<void> => {
+  if (storage instanceof MongoStorage) {
+    await storage.start()
+  }
+  server.listen(HTTP_PORT, () => {
+    console.log(`chat server listening on http://localhost:${HTTP_PORT}`)
+  })
+}
+
+void start()

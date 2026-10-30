@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import {
   CLOSE_CODES,
   CONNECTION_IS_DEAD_AFTER_MS,
+  DEDUPE_IDS_KEPT_PER_ROOM,
   ERROR_TEXTS,
   HEARTBEAT_INTERVAL_MS,
   HISTORY_LIMIT_DEFAULT,
@@ -22,6 +23,20 @@ import { RoomRegistry } from './rooms'
 
 const storage: StorageInterface = new MemoryStorage()
 const registry = new RoomRegistry()
+const recentIdsByRoom = new Map<string, string[]>()
+
+const isDuplicate = (room: string, id: string): boolean => {
+  const recent = recentIdsByRoom.get(room) ?? []
+  if (recent.includes(id)) {
+    return true
+  }
+  recent.push(id)
+  if (recent.length > DEDUPE_IDS_KEPT_PER_ROOM) {
+    recent.splice(0, recent.length - DEDUPE_IDS_KEPT_PER_ROOM)
+  }
+  recentIdsByRoom.set(room, recent)
+  return false
+}
 
 const app = express()
 app.get('/health', (_request, response) => {
@@ -106,8 +121,12 @@ wss.on('connection', (rawSocket: WebSocket) => {
         send(socket, { type: 'error', reason: ERROR_TEXTS.MESSAGE_TOO_LONG })
         return
       }
+      const id = payload.id || messageId()
+      if (isDuplicate(session.room, id)) {
+        return
+      }
       const message: ChatMessage = {
-        id: messageId(),
+        id,
         room: session.room,
         sender: session.name,
         body,

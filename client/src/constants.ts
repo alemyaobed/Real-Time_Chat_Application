@@ -1,9 +1,11 @@
 export const SERVER_WS_URL = 'ws://localhost:4000/ws'
 
+export const RECONNECT_BACKOFF_STEPS_MS = [1000, 2000, 4000, 8000, 16000, 30000]
+
 export const STATUS_TEXTS = {
   CONNECTING: 'Connecting…',
   ONLINE: 'Connected',
-  OFFLINE: 'Disconnected'
+  RECONNECTING: 'Reconnecting…'
 } as const
 
 export const APP_TEXTS = {

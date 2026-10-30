@@ -4,6 +4,7 @@ export const CONNECTION_IS_DEAD_AFTER_MS = 10_000
 export const HISTORY_LIMIT_DEFAULT = 50
 export const MAX_MESSAGE_LENGTH = 2000
 export const MAX_NAME_LENGTH = 24
+export const DEDUPE_IDS_KEPT_PER_ROOM = 200
 
 export const MESSAGE_TYPES = {
   JOIN: 'join',

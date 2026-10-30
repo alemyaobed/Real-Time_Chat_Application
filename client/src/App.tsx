@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChatClient } from './chat-client'
 import { APP_TEXTS, STATUS_TEXTS } from './constants'
-import type { ChatMessage, ConnectionStatus, ServerPayload } from './protocol'
+import type {
+  ConnectionStatus,
+  DisplayMessage,
+  ServerPayload
+} from './protocol'
 
 interface JoinDetails {
   name: string
@@ -57,23 +61,20 @@ function JoinView({ onJoin }: { onJoin: (details: JoinDetails) => void }) {
 
 function ChatView({ name, room }: { name: string; room: string }) {
   const clientRef = useRef<ChatClient | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<DisplayMessage[]>([])
   const [names, setNames] = useState<string[]>([])
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [draft, setDraft] = useState('')
   const [notice, setNotice] = useState('')
 
   useEffect(() => {
-    const client = new ChatClient()
-    clientRef.current = client
-
-    client.connect(name, room, {
+    const client = new ChatClient(name, room, {
       onPayload: (payload: ServerPayload) => {
         if (payload.type === 'history') {
-          setMessages(payload.messages)
+          setMessages((current) => mergeHistory(current, payload.messages))
         }
         if (payload.type === 'message') {
-          setMessages((current) => [...current, payload.message])
+          setMessages((current) => acceptMessage(current, payload.message, name))
         }
         if (payload.type === 'presence') {
           setNames(payload.names)
@@ -82,10 +83,10 @@ function ChatView({ name, room }: { name: string; room: string }) {
           setNotice(payload.reason)
         }
       },
-      onStatusChange: (next) => {
-        setStatus(next)
-      }
+      onStatusChange: setStatus
     })
+    clientRef.current = client
+    client.connect()
 
     return () => {
       client.close()
@@ -95,7 +96,20 @@ function ChatView({ name, room }: { name: string; room: string }) {
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
     const body = draft.trim()
-    if (body && clientRef.current?.sendMessage(body)) {
+    const client = clientRef.current
+    if (body && client) {
+      const id = client.sendMessage(body)
+      setMessages((current) => [
+        ...current,
+        {
+          id,
+          room,
+          sender: name,
+          body,
+          sentAt: new Date().toISOString(),
+          pending: true
+        }
+      ])
       setDraft('')
     }
   }
@@ -114,7 +128,7 @@ function ChatView({ name, room }: { name: string; room: string }) {
             ? STATUS_TEXTS.ONLINE
             : status === 'connecting'
               ? STATUS_TEXTS.CONNECTING
-              : STATUS_TEXTS.OFFLINE}
+              : STATUS_TEXTS.RECONNECTING}
         </span>
       </header>
 
@@ -122,7 +136,10 @@ function ChatView({ name, room }: { name: string; room: string }) {
 
       <ul className="messages">
         {messages.map((message) => (
-          <li key={message.id} className={message.sender === name ? 'mine' : ''}>
+          <li
+            key={message.id}
+            className={`${message.sender === name ? 'mine' : ''} ${message.pending ? 'pending' : ''}`}
+          >
             <span className="sender">{message.sender}</span>
             <span className="body">{message.body}</span>
           </li>
@@ -139,4 +156,40 @@ function ChatView({ name, room }: { name: string; room: string }) {
       </form>
     </main>
   )
+}
+
+function mergeHistory(
+  current: DisplayMessage[],
+  history: DisplayMessage[]
+): DisplayMessage[] {
+  const byId = new Map<string, DisplayMessage>()
+  for (const message of history) {
+    byId.set(message.id, message)
+  }
+  for (const message of current) {
+    const known = byId.get(message.id)
+    if (!known) {
+      byId.set(message.id, message)
+    } else if (message.pending && !known.pending) {
+      byId.set(message.id, { ...message, pending: false })
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.sentAt.localeCompare(b.sentAt))
+}
+
+function acceptMessage(
+  current: DisplayMessage[],
+  incoming: DisplayMessage,
+  ownName: string
+): DisplayMessage[] {
+  const exists = current.some((message) => message.id === incoming.id)
+  if (exists) {
+    return current.map((message) =>
+      message.id === incoming.id ? incoming : message
+    )
+  }
+  if (incoming.sender === ownName) {
+    return current
+  }
+  return [...current, incoming]
 }

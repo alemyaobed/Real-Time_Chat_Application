@@ -33,4 +33,8 @@ export type ServerPayload =
   | ServerPresencePayload
   | ServerErrorPayload
 
-export type ConnectionStatus = 'connecting' | 'online' | 'offline'
+export type ConnectionStatus = 'connecting' | 'online' | 'reconnecting'
+
+export interface DisplayMessage extends ChatMessage {
+  pending?: boolean
+}

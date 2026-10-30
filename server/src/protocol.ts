@@ -6,6 +6,7 @@ export interface ClientJoinPayload {
 
 export interface ClientMessagePayload {
   type: 'message'
+  id: string
   body: string
 }
 
